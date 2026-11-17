@@ -1,0 +1,113 @@
+name: 'Quimera Kinetic Mutation Immunity (1.58-Bit AI)'
+author: 'Quimera Labs'
+description: 'Sub-10s AI Mutation Testing in CI/CD via 1.58-Bit Fisher-Guided SLMs & Zygote Copy-on-Write Swarms. Zero GPU required.'
+
+branding:
+  icon: 'shield'
+  color: 'purple'
+
+inputs:
+  target:
+    description: 'Diretório ou arquivo-fonte alvo para mutação semântica (ex: src/)'
+    required: false
+    default: 'src/'
+  probe:
+    description: 'Extensão de sonda desacoplada (ex: quimera-sonda-rust, quimera-sonda-jvm, quimera-sonda-python)'
+    required: false
+    default: 'quimera-sonda-rust'
+  max-mutants:
+    description: 'Número máximo de mutantes gerados por execução (Pro: até 128 | Enterprise: até 1024)'
+    required: false
+    default: '128'
+  timeout-ms:
+    description: 'Watchdog timeout em milissegundos por mutante no Zygote CoW Runner'
+    required: false
+    default: '50'
+  app-code:
+    description: 'Código identificador da aplicação (app-code) vinculado à licença comercial'
+    required: true
+  license-key:
+    description: 'Chave comercial QUIMERA_LICENSE_KEY vinculada a org, repo e app-code'
+    required: true
+  engine-version:
+    description: 'Tag de release do binário pré-compilado Quimera (ex: v1.0.0)'
+    required: false
+    default: 'v1.0.0'
+  upload-sarif:
+    description: 'Envia automaticamente o relatório SARIF 2.1.0 para a aba GitHub Code Scanning'
+    required: false
+    default: 'true'
+
+outputs:
+  immunity-score:
+    description: 'Índice percentual de Imunidade Cinética Sintética (0% a 100%)'
+    value: ${{ steps.quimera-run.outputs.immunity-score }}
+  surviving-mutants:
+    description: 'Quantidade de pontos cegos (mutantes sobreviventes) detectados no PR'
+    value: ${{ steps.quimera-run.outputs.surviving-mutants }}
+  sarif-path:
+    description: 'Caminho do arquivo SARIF gerado'
+    value: ${{ steps.quimera-run.outputs.sarif-path }}
+  license-tier:
+    description: 'Tier comercial validado (pro, enterprise)'
+    value: ${{ steps.quimera-run.outputs.license-tier }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Cache Quimera Engine Binary & Encrypted 1.58-Bit Model
+      id: cache-quimera
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/quimera-action/${{ inputs.engine-version }}
+        key: quimera-bin-${{ runner.os }}-${{ runner.arch }}-${{ inputs.engine-version }}
+
+    - name: Fetch Pre-Built Binary & Encrypted .kineq Model
+      if: steps.cache-quimera.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        CACHE_DIR="$HOME/.cache/quimera-action/${{ inputs.engine-version }}"
+        mkdir -p "$CACHE_DIR"
+        BASE_URL="https://github.com/Quimera-Laboratory/mutation-immunity-action/releases/download/${{ inputs.engine-version }}"
+        curl -fsSL "$BASE_URL/quimera-mutate-linux-x86_64" -o "$CACHE_DIR/quimera-mutate"
+        curl -fsSL "$BASE_URL/quimera-mut-300m.kineq" -o "$CACHE_DIR/quimera-mut-300m.kineq"
+        chmod +x "$CACHE_DIR/quimera-mutate"
+
+    - name: Pre-Fault Encrypted Model into /dev/shm & Run Quimera Engine
+      id: quimera-run
+      shell: bash
+      env:
+        QUIMERA_LICENSE_KEY: ${{ inputs.license-key }}
+        QUIMERA_APP_CODE: ${{ inputs.app-code }}
+        QUIMERA_MODEL_PATH: "/dev/shm/model.kineq"
+      run: |
+        set -euo pipefail
+        CACHE_DIR="$HOME/.cache/quimera-action/${{ inputs.engine-version }}"
+        cp "$CACHE_DIR/quimera-mut-300m.kineq" /dev/shm/model.kineq
+        REPORT_OUT=$("$CACHE_DIR/quimera-mutate" \
+          --target "${{ inputs.target }}" \
+          --probe "${{ inputs.probe }}" \
+          --max-mutants "${{ inputs.max-mutants }}" \
+          --timeout-ms "${{ inputs.timeout-ms }}" \
+          --app-code "${{ inputs.app-code }}" \
+          --sarif-output quimera-results.sarif \
+          --json)
+        echo "$REPORT_OUT"
+        JSON_LINE=$(echo "$REPORT_OUT" | grep -E '^\{.*\}$' | tail -n 1)
+        python3 -c '
+        import json, os, sys
+        data = json.loads(sys.argv[1])
+        with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+            f.write(f"immunity-score={data[\"score\"]}\n")
+            f.write(f"surviving-mutants={data[\"survived\"]}\n")
+            f.write("sarif-path=quimera-results.sarif\n")
+            f.write(f"license-tier={data.get(\"license_tier\", \"unknown\")}\n")
+        ' "$JSON_LINE"
+
+    - name: Upload SARIF to GitHub Security Tab
+      if: always() && inputs.upload-sarif == 'true'
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: quimera-results.sarif
+        category: quimera-mutation-immunity

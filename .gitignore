@@ -1,0 +1,4 @@
+*.sarif
+*.kineq
+bin/
+models/

@@ -1,0 +1,15 @@
+Quimera Labs Commercial Software License
+
+Copyright (c) 2026 Quimera Laboratory. All rights reserved.
+
+This GitHub Action distributes pre-compiled binaries and encrypted Q-KineQuant
+1.58-Bit model weights (`.kineq`) of the Quimera Mutation Engine.
+
+Execution requires a valid `QUIMERA_LICENSE_KEY` issued by Quimera Laboratory
+and cryptographically bound to:
+  - Authorized GitHub Organization (`org`)
+  - Authorized Repository (`repo`)
+  - Authorized Application Code (`app-code`)
+
+Unauthorized redistribution, reverse engineering, or execution outside the
+licensed organization, repository, and application scope is prohibited.
